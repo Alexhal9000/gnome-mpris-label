@@ -1,24 +1,29 @@
-const Main = imports.ui.main;
-const PanelMenu = imports.ui.panelMenu;
-const PopupMenu = imports.ui.popupMenu;
-const {Clutter,Gio,GLib,GObject,St} = imports.gi;
-const ExtensionUtils = imports.misc.extensionUtils;
-const CurrentExtension = ExtensionUtils.getCurrentExtension();
-const Volume = imports.ui.status.volume;
+import * as Main from 'resource:///org/gnome/shell/ui/main.js';
+import * as PanelMenu from 'resource:///org/gnome/shell/ui/panelMenu.js';
+import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js';
+import Clutter from 'gi://Clutter';
+import Gio from 'gi://Gio';
+import GLib from 'gi://GLib';
+import GObject from 'gi://GObject';
+import St from 'gi://St';
+import {Extension} from 'resource:///org/gnome/shell/extensions/extension.js';
+import * as Volume from 'resource:///org/gnome/shell/ui/status/volume.js';
 
-const { Players } = CurrentExtension.imports.players;
-const { buildLabel } = CurrentExtension.imports.label;
+import {Players} from './players.js';
+import {buildLabel} from './label.js';
 
 let indicator = null;
 
-function enable(){
-	indicator = new MprisLabel(ExtensionUtils.getSettings());
-}
+export default class MprisLabelExtension extends Extension {
+	enable(){
+		indicator = new MprisLabel(this.getSettings());
+	}
 
-function disable(){
-	indicator._disable();
-	indicator.destroy();
-	indicator = null;
+	disable(){
+		indicator._disable();
+		indicator.destroy();
+		indicator = null;
+	}
 }
 
 var MprisLabel = GObject.registerClass(
@@ -430,7 +435,7 @@ class MprisLabel extends PanelMenu.Button {
 	//settings shortcut:
 		let settingsMenuItem = new PopupMenu.PopupMenuItem('Settings');
 		settingsMenuItem.setOrnament(PopupMenu.Ornament.NONE); //to force item horizontal alignment
-		settingsMenuItem.connect('activate', () => ExtensionUtils.openPrefs() );
+		settingsMenuItem.connect('activate', () => Extension.lookupByUUID('mprisLabel@moon-0xff.github.com').openPreferences());
 		this.menu.addMenuItem(settingsMenuItem);
 	}
 
@@ -474,7 +479,6 @@ class MprisLabel extends PanelMenu.Button {
 		this._timeout = GLib.timeout_add(GLib.PRIORITY_DEFAULT,
 			REFRESH_RATE, this._refresh.bind(this));
 	}
-
 	_setIcon(){
 		const ICON_PLACE = this.settings.get_string('show-icon');
 		const ICON_PADDING = this.settings.get_int('icon-padding');
@@ -482,42 +486,107 @@ class MprisLabel extends PanelMenu.Button {
 		const SYMBOLIC_ICON = this.settings.get_boolean('symbolic-source-icon');
 		const USE_ALBUM = this.settings.get_boolean('use-album');
 		const ALBUM_BLACKLIST = this.settings.get_string('album-blacklist').trim();
-
+		const ALBUM_SIZE = this.settings.get_int('album-size'); // Move this outside
+	
 		if(this.icon){
 			this.box.remove_child(this.icon);
 			this.icon = null;
 		}
-
+	
 		if(!ICON_PLACE || !this.player || this.label.get_text() == "" || this.label.get_text() == PLACEHOLDER)
 			return
-
-		if(USE_ALBUM){
-			const ALBUM_SIZE = this.settings.get_int('album-size');
-			let size = Math.floor(Main.panel.height*ALBUM_SIZE/100);
-
-			const blacklist = ALBUM_BLACKLIST.toLowerCase().replaceAll(' ','').split(',');
-			if(!this.player.identity || !blacklist.includes(this.player.identity.toLowerCase()))
-				this.icon = this.player.getArtUrlIcon(size);
+	
+		if (USE_ALBUM) {
+			const url = this.player.stringFromMetadata("mpris:artUrl", this.player.metadata);
+			
+			if (url && url.length > 0) {
+				// Create St.Bin instead of St.Icon for proper background cropping
+				this.icon = new St.Bin({
+					style_class: 'system-status-icon',
+				});
+				this.icon.set_clip_to_allocation(true);
+			} else {
+				this.icon = null;
+			}
 		}
-
+		
 		if(this.icon == null){
 			this.icon = this.player.getIcon(SYMBOLIC_ICON);
 			if (SYMBOLIC_ICON)
 				this.icon.set_style('-st-icon-style: symbolic;');
 		}
-
+		
 		if (this.icon != null | undefined){
-			if (ICON_PLACE == "right"){
-				this.icon.set_style(this.icon.get_style() + "padding-left: " + ICON_PADDING + "px;padding-right: 0px;");
-				this.box.add_child(this.icon);
-			}
-			else if (ICON_PLACE == "left"){
-				this.icon.set_style(this.icon.get_style() + "padding-left: 0px;padding-right: " + ICON_PADDING + "px;");
-				this.box.insert_child_at_index(this.icon,0);
+			const panelHeight = Main.panel.height;
+			
+			// Check if this is our custom album art Bin or a regular icon
+			if (USE_ALBUM) {
+				const url = this.player.stringFromMetadata("mpris:artUrl", this.player.metadata);
+				this.icon.set_size(ALBUM_SIZE, Math.floor(panelHeight*0.8));
+				
+				// Set the album art as background
+				this.icon.set_style(
+					`margin-left: ${ICON_PADDING}px; margin-right: 0; ` +						
+					`width: ${ALBUM_SIZE}px; ` +
+					`background-image: url('${url}'); ` +
+					`border-radius: ${panelHeight*0.2}px 0 0 ${panelHeight*0.2}px; ` +
+					`background-size: cover; background-position: center; ` +
+					`border: none; padding: 0px; overflow: hidden;`);
+				// Only add gradient if album size is bigger than panel height
+				if (ALBUM_SIZE > Math.floor(panelHeight*0.8)) {
+					// Create horizontal container for the fade effect
+					const overlayContainer = new St.BoxLayout({
+						style: `width: ${ALBUM_SIZE}px; height: ${panelHeight}px; ` +
+							`pointer-events: none;`
+					});
+
+					// Left spacer (transparent area)
+					const spacer = new St.Widget({
+						style: `width: ${ALBUM_SIZE - Math.floor(ALBUM_SIZE*0.4)}px; height: 100%; ` +
+							`background-color: transparent;`
+					});
+					overlayContainer.add_child(spacer);
+
+					// Right fade area - 40 strips of 1px each
+					const fadeContainer = new St.BoxLayout({
+						style: `width: 40px; height: 100%; pointer-events: none;`
+					});
+
+					for (let i = 0; i < Math.floor(ALBUM_SIZE*0.4); i++) {
+						const opacity = (i / (Math.floor(ALBUM_SIZE*0.4)-1)) * 1.0; // 0 to 1.0 over Math.floor(ALBUM_SIZE*0.4) pixels
+						const strip = new St.Widget({
+							style: `width: 1px; height: 100%; ` +
+								`background-color: rgba(0,0,0,${opacity}); ` +
+								`pointer-events: none;`
+						});
+						fadeContainer.add_child(strip);
+					}
+
+					overlayContainer.add_child(fadeContainer);
+
+					// Add the container on top
+					this.icon.add_child(overlayContainer);
+				}
+				
+				if (ICON_PLACE == "right"){
+					this.box.add_child(this.icon);
+				}
+				else if (ICON_PLACE == "left"){
+					this.box.insert_child_at_index(this.icon,0);
+				}
+			} else {
+				// Regular icon handling (non-album)
+				if (ICON_PLACE == "right"){
+					this.icon.set_style(this.icon.get_style() + `padding-left: ${ICON_PADDING}px; padding-right: 0px;`);
+					this.box.add_child(this.icon);
+				}
+				else if (ICON_PLACE == "left"){
+					this.icon.set_style(this.icon.get_style() + `padding-left: 0px; padding-right: ${ICON_PADDING}px;`);
+					this.box.insert_child_at_index(this.icon,0);
+				}
 			}
 		}
 	}
-
 	_setText() {
 		try{
 			if(this.player == null || undefined)
@@ -566,4 +635,3 @@ class MprisLabel extends PanelMenu.Button {
 		}
 	}
 });
-
