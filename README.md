@@ -1,4 +1,4 @@
-![alt text](https://github.com/Moon-0xff/gnome-mpris-label/raw/main/screenshot.png "extension screenshot")
+![alt text](https://github.com/Alexhal9000/gnome-mpris-label/raw/main/screenshot_Alexhal9000.png "extension screenshot")
 
 # About
 This GNOME extension reads metadata information from an mpris compatible player and displays it on the top bar. It works with Spotify, Vlc, Rhythmbox, Chromium based browsers and (probably) any mpris compatible player.
