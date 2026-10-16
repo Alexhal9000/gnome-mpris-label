@@ -1,12 +1,16 @@
-const {Adw,Gio,Gtk,Gdk} = imports.gi;
+import Adw from 'gi://Adw';
+import Gio from 'gi://Gio';
+import Gtk from 'gi://Gtk';
+import Gdk from 'gi://Gdk';
 
-const ExtensionUtils = imports.misc.extensionUtils;
+import {ExtensionPreferences} from 'resource:///org/gnome/Shell/Extensions/js/extensions/prefs.js';
 
 function init(){}
 
-function fillPreferencesWindow(window){
-	let settings = ExtensionUtils.getSettings('org.gnome.shell.extensions.mpris-label');
-	window.default_height = 960;
+export default class MprisLabelPreferences extends ExtensionPreferences {
+fillPreferencesWindow(window){
+	const settings = this.getSettings();
+	window.default_height = 1050;
 
 //panel page:
 	let page = addPreferencesPage(window,'Panel','computer-symbolic');
@@ -16,11 +20,13 @@ function fillPreferencesWindow(window){
 	addSpinButton(settings,group,'icon-padding', 'Icon padding', 0, 50, undefined);
 	addSwitch(settings,group,'symbolic-source-icon', 'Use symbolic source icon', "Uses an icon that follows the shell's color scheme");
 	addSwitch(settings,group,'use-album','Use album art as icon when available',undefined);
-	addSpinButton(settings,group,'album-size','Album art scaling (in %)',20,250,undefined);
+	addSpinButton(settings,group,'icon-desaturation','Icon desaturation (in %)',0,100,"0% full color, 100%  greyscale");
+	addSpinButton(settings,group,'album-size','Album art width (in px)',20,250,undefined);
+	addSpinButton(settings,group,'album-radius','Album art corner radius (in %)',0,100,"0% for square, ~25% for rounded corners, 100% for circle");
 
 	group = addGroup(page,'Position');
 	let [extensionPlaceDropDown] = addDropDown(settings,group,'extension-place','Extension place',{'left':'left','center':'center','right':'right'},undefined);
-	addSpinButton(settings,group,'extension-index','Extension index',0,20,"Set widget location within with respect to other adjacent widgets");
+	addSpinButton(settings,group,'extension-index','Extension index',0,20,"Set widget location with respect to other adjacent widgets");
 	addSpinButton(settings,group,'left-padding','Left padding',0,500,undefined);
 	addSpinButton(settings,group,'right-padding','Right padding',0,500,undefined);
 
@@ -30,7 +36,7 @@ function fillPreferencesWindow(window){
 
 	addResetButton(settings,group,'Reset Panel settings',[
 		'show-icon','left-padding','right-padding','extension-index','extension-place','reposition-delay','reposition-on-button-press','use-album',
-		'album-size','symbolic-source-icon','icon-padding'],
+		'icon-desaturation','album-size','album-radius','symbolic-source-icon','icon-padding'],
 		[showIconDropDown,extensionPlaceDropDown]
 	);
 
@@ -137,6 +143,7 @@ function fillPreferencesWindow(window){
 
 	[doubleClickTime, doubleClickLabel, leftDoubleClickDropDown, middleDoubleClickDropDown, rightDoubleClickDropDown, thumbDoubleForwardDropDown, thumbDoubleBackwardDropDown]
 		.forEach(el => bindEnabled(settings, 'enable-double-clicks', el));
+}
 }
 
 // Adwaita "design" and "structure" functions
@@ -393,7 +400,7 @@ function buildActionRow(labelstring,labeltooltip){
 function buildInfoButton(labeltooltip){
 	let thisInfoButton = new Gtk.MenuButton({
 		valign: Gtk.Align.CENTER,
-		icon_name: 'info-symbolic',
+		icon_name: 'dialog-information-symbolic',
 		visible: true
 	});
 	thisInfoButton.add_css_class('flat');

@@ -6,6 +6,7 @@ import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
 import GObject from 'gi://GObject';
 import St from 'gi://St';
+import Cogl from 'gi://Cogl';
 import {Extension} from 'resource:///org/gnome/shell/extensions/extension.js';
 import * as Volume from 'resource:///org/gnome/shell/ui/status/volume.js';
 
@@ -53,7 +54,8 @@ class MprisLabel extends PanelMenu.Button {
 
 		this.players = new Players(this.settings);
 
-		this.connect('button-press-event',(_a, event) => this._onClick(event));
+		this.box.reactive = true;
+		this.box.connect('button-press-event',(_a, event) => this._onClick(event));
 		this.connect('scroll-event', (_a, event) => this._onScroll(event));
 
 		this.volumeControl = Volume.getMixerControl();
@@ -62,8 +64,9 @@ class MprisLabel extends PanelMenu.Button {
 
 		this.settings.connect('changed::left-padding',this._onPaddingChanged.bind(this));
 		this.settings.connect('changed::right-padding',this._onPaddingChanged.bind(this));
-		this.settings.connect('changed::extension-index',this._updateTrayPosition.bind(this));
-		this.settings.connect('changed::extension-place',this._updateTrayPosition.bind(this));
+		this._updateTrayPositionPending = false;
+		this.settings.connect('changed::extension-index',() => {this._updateTrayPositionPending = true;});
+		this.settings.connect('changed::extension-place',() => {this._updateTrayPositionPending = true;});
 		this.settings.connect('changed::show-icon',this._setIcon.bind(this));
 		this.settings.connect('changed::use-album',this._setIcon.bind(this));
 		this.settings.connect('changed::symbolic-source-icon', this._setIcon.bind(this));
@@ -71,7 +74,7 @@ class MprisLabel extends PanelMenu.Button {
 
 		Main.panel.addToStatusArea('Mpris Label',this,EXTENSION_INDEX,EXTENSION_PLACE);
 
-		this._repositionTimeout = GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT,REPOSITION_DELAY,this._updateTrayPosition.bind(this));
+		this._repositionTimeout = GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT,REPOSITION_DELAY,() => {this._updateTrayPositionPending = true;});
 
 		this.lastClick = new Map(); // place where occurrences of click actions will be stored
 
@@ -107,7 +110,12 @@ class MprisLabel extends PanelMenu.Button {
 			new_channels.push(Math.round((channel[0] + channel[1]) / 2));
 		});
 
-		let mixedColor = Clutter.Color.new(new_channels[0],new_channels[1],new_channels[2],new_channels[3]);
+		let mixedColor = new Cogl.Color({
+			red: new_channels[0],
+			green: new_channels[1],
+			blue: new_channels[2],
+			alpha: new_channels[3]
+		});
 		let color_str = mixedColor.to_string();
 		this.unfocusColor = color_str.substring(0,7); //ignore alpha channel
 	}
@@ -116,23 +124,17 @@ class MprisLabel extends PanelMenu.Button {
 		const EXTENSION_PLACE = this.settings.get_string('extension-place');
 		const EXTENSION_INDEX = this.settings.get_int('extension-index');
 
-		if(this._timeout) //prevent refreshes while changing position
-			this._removeTimeout();
+		if (!this.container.get_parent()) //return to prevent crash on delete
+			return
+		
+		this.container.get_parent().remove_child(this.container);
 
-		if (this.container.get_parent())
-			this.container.get_parent().remove_child(this.container);
+		if (Main.panel.statusArea['Mpris Label'])
+			delete Main.panel.statusArea['Mpris Label'];
 
-		if (EXTENSION_PLACE == "left"){
-			Main.panel._leftBox.insert_child_at_index(this.container, EXTENSION_INDEX);
-		}
-		else if (EXTENSION_PLACE == "center"){
-			Main.panel._centerBox.insert_child_at_index(this.container, EXTENSION_INDEX);
-		}
-		else if (EXTENSION_PLACE == "right"){
-			Main.panel._rightBox.insert_child_at_index(this.container, EXTENSION_INDEX);
-		}
+		Main.panel.addToStatusArea('Mpris Label',this,EXTENSION_INDEX,EXTENSION_PLACE);
 
-		this._refresh(); //call and re-enable the refresh loop
+		this._updateTrayPositionPending = false; //repositioning completed
 	}
 
 	_onClick(event){
@@ -330,7 +332,7 @@ class MprisLabel extends PanelMenu.Button {
 		}
 
 		const icon = Gio.Icon.new_for_string(this._setVolumeIcon(volumeRatio));
-		Main.osdWindowManager.show(monitor, icon, streamName, volumeRatio);
+		Main.osdWindowManager.showOne(monitor, icon, streamName, volumeRatio);
 	}
 
 	_getStream(){
@@ -445,6 +447,9 @@ class MprisLabel extends PanelMenu.Button {
 		if(this._timeout) //prevent simultaneous timeouts
 			this._removeTimeout();
 
+		if (this._updateTrayPositionPending) //if signal tiggered a position update
+			this._updateTrayPosition();
+
 		let prevPlayer = this.player;
 
 		try {
@@ -479,6 +484,7 @@ class MprisLabel extends PanelMenu.Button {
 		this._timeout = GLib.timeout_add(GLib.PRIORITY_DEFAULT,
 			REFRESH_RATE, this._refresh.bind(this));
 	}
+
 	_setIcon(){
 		const ICON_PLACE = this.settings.get_string('show-icon');
 		const ICON_PADDING = this.settings.get_int('icon-padding');
@@ -486,107 +492,106 @@ class MprisLabel extends PanelMenu.Button {
 		const SYMBOLIC_ICON = this.settings.get_boolean('symbolic-source-icon');
 		const USE_ALBUM = this.settings.get_boolean('use-album');
 		const ALBUM_BLACKLIST = this.settings.get_string('album-blacklist').trim();
-		const ALBUM_SIZE = this.settings.get_int('album-size'); // Move this outside
-	
+
 		if(this.icon){
 			this.box.remove_child(this.icon);
 			this.icon = null;
 		}
-	
+
 		if(!ICON_PLACE || !this.player || this.label.get_text() == "" || this.label.get_text() == PLACEHOLDER)
 			return
-	
-		if (USE_ALBUM) {
-			const url = this.player.stringFromMetadata("mpris:artUrl", this.player.metadata);
-			
-			if (url && url.length > 0) {
-				// Create St.Bin instead of St.Icon for proper background cropping
-				this.icon = new St.Bin({
-					style_class: 'system-status-icon',
-				});
-				this.icon.set_clip_to_allocation(true);
-			} else {
-				this.icon = null;
-			}
+
+		if(USE_ALBUM){
+			const blacklist = ALBUM_BLACKLIST.toLowerCase().replaceAll(' ','').split(',');
+			if(!this.player.identity || !blacklist.includes(this.player.identity.toLowerCase()))
+				this.icon = this._buildAlbumArt(ICON_PADDING);
 		}
-		
+
 		if(this.icon == null){
-			this.icon = this.player.getIcon(SYMBOLIC_ICON);
+			this.icon = this.player.getIcon();
 			if (SYMBOLIC_ICON)
 				this.icon.set_style('-st-icon-style: symbolic;');
 		}
-		
+
 		if (this.icon != null | undefined){
-			const panelHeight = Main.panel.height;
-			
-			// Check if this is our custom album art Bin or a regular icon
-			if (USE_ALBUM) {
-				const url = this.player.stringFromMetadata("mpris:artUrl", this.player.metadata);
-				this.icon.set_size(ALBUM_SIZE, Math.floor(panelHeight*0.8));
-				
-				// Set the album art as background
-				this.icon.set_style(
-					`margin-left: ${ICON_PADDING}px; margin-right: 0; ` +						
-					`width: ${ALBUM_SIZE}px; ` +
-					`background-image: url('${url}'); ` +
-					`border-radius: ${panelHeight*0.2}px 0 0 ${panelHeight*0.2}px; ` +
-					`background-size: cover; background-position: center; ` +
-					`border: none; padding: 0px; overflow: hidden;`);
-				// Only add gradient if album size is bigger than panel height
-				if (ALBUM_SIZE > Math.floor(panelHeight*0.8)) {
-					// Create horizontal container for the fade effect
-					const overlayContainer = new St.BoxLayout({
-						style: `width: ${ALBUM_SIZE}px; height: ${panelHeight}px; ` +
-							`pointer-events: none;`
-					});
-
-					// Left spacer (transparent area)
-					const spacer = new St.Widget({
-						style: `width: ${ALBUM_SIZE - Math.floor(ALBUM_SIZE*0.4)}px; height: 100%; ` +
-							`background-color: transparent;`
-					});
-					overlayContainer.add_child(spacer);
-
-					// Right fade area - 40 strips of 1px each
-					const fadeContainer = new St.BoxLayout({
-						style: `width: 40px; height: 100%; pointer-events: none;`
-					});
-
-					for (let i = 0; i < Math.floor(ALBUM_SIZE*0.4); i++) {
-						const opacity = (i / (Math.floor(ALBUM_SIZE*0.4)-1)) * 1.0; // 0 to 1.0 over Math.floor(ALBUM_SIZE*0.4) pixels
-						const strip = new St.Widget({
-							style: `width: 1px; height: 100%; ` +
-								`background-color: rgba(0,0,0,${opacity}); ` +
-								`pointer-events: none;`
-						});
-						fadeContainer.add_child(strip);
-					}
-
-					overlayContainer.add_child(fadeContainer);
-
-					// Add the container on top
-					this.icon.add_child(overlayContainer);
-				}
-				
-				if (ICON_PLACE == "right"){
+			if (this.icon === this.albumArtIcon){ //custom album art carries its own margins
+				if (ICON_PLACE == "right")
 					this.box.add_child(this.icon);
-				}
-				else if (ICON_PLACE == "left"){
+				else if (ICON_PLACE == "left")
 					this.box.insert_child_at_index(this.icon,0);
-				}
-			} else {
-				// Regular icon handling (non-album)
-				if (ICON_PLACE == "right"){
-					this.icon.set_style(this.icon.get_style() + `padding-left: ${ICON_PADDING}px; padding-right: 0px;`);
-					this.box.add_child(this.icon);
-				}
-				else if (ICON_PLACE == "left"){
-					this.icon.set_style(this.icon.get_style() + `padding-left: 0px; padding-right: ${ICON_PADDING}px;`);
-					this.box.insert_child_at_index(this.icon,0);
-				}
 			}
+			else if (ICON_PLACE == "right"){
+				this._update_style(this.label, "margin-right", ICON_PADDING + "px");
+				this.box.add_child(this.icon);
+			}
+			else if (ICON_PLACE == "left"){
+				this._update_style(this.label, "margin-right", "0px");
+				this._update_style(this.icon, "margin-right", ICON_PADDING + "px");
+				this.box.insert_child_at_index(this.icon,0);
+			}
+
+			const ICON_DESATURATION = this.settings.get_int('icon-desaturation');
+			if (ICON_DESATURATION > 0)
+				this.icon.add_effect_with_name('desaturate', new Clutter.DesaturateEffect({ factor: ICON_DESATURATION / 100 }));
 		}
 	}
+
+	// Album art cropped to the panel with a left-rounded edge. When ALBUM_SIZE (px) is wider
+	// than the panel, a black fade is overlaid on the right side so it blends into the bar.
+	_buildAlbumArt(iconPadding){
+		this.albumArtIcon = null;
+		const url = this.player.stringFromMetadata("mpris:artUrl",this.player.metadata);
+		if(!url || url.length == 0)
+			return null;
+
+		const ALBUM_SIZE = this.settings.get_int('album-size');
+		const panelHeight = Main.panel.height;
+		const artHeight = Math.floor(panelHeight*0.8);
+		const fadeWidth = Math.floor(ALBUM_SIZE*0.4);
+
+		const art = new St.Bin({style_class: 'system-status-icon'});
+		art.set_clip_to_allocation(true);
+		art.set_size(ALBUM_SIZE,artHeight);
+		art.set_style(
+			`margin-left: ${iconPadding}px; margin-right: 0; ` +
+			`width: ${ALBUM_SIZE}px; ` +
+			`background-image: url('${url}'); ` +
+			`border-radius: ${panelHeight*0.2}px 0 0 ${panelHeight*0.2}px; ` +
+			`background-size: cover; background-position: center; ` +
+			`border: none; padding: 0px; overflow: hidden;`);
+
+		if(ALBUM_SIZE > artHeight && fadeWidth > 1){
+			const overlay = new St.BoxLayout({style: `width: ${ALBUM_SIZE}px; height: ${panelHeight}px;`});
+			overlay.add_child(new St.Widget({style: `width: ${ALBUM_SIZE-fadeWidth}px; height: 100%;`}));
+
+			const fade = new St.BoxLayout({style: `width: ${fadeWidth}px; height: 100%;`});
+			for(let i = 0; i < fadeWidth; i++){
+				fade.add_child(new St.Widget({
+					style: `width: 1px; height: 100%; background-color: rgba(0,0,0,${i/(fadeWidth-1)});`
+				}));
+			}
+			overlay.add_child(fade);
+			art.add_child(overlay);
+		}
+
+		this.albumArtIcon = art;
+		return art;
+	}
+
+	_update_style(widget, property, value) {
+		if (!widget)
+			return;
+
+		let style = widget.get_style() || "";
+
+		let rules = style.split(";").map(s => s.trim()).filter(s => s.length > 0);
+		rules = rules.filter(rule => !rule.startsWith(property + ":"));
+		if (value !== null && value !== undefined)
+			rules.push(`${property}: ${value}`);
+
+		widget.set_style(rules.join("; ") + ";");
+	}
+
 	_setText() {
 		try{
 			if(this.player == null || undefined)
@@ -602,7 +607,10 @@ class MprisLabel extends PanelMenu.Button {
 
 	_setLabelStyle() {
 		const FONT_COLOR = this.settings.get_string('font-color');
-		this.label.set_style('color: '+FONT_COLOR);
+		if (FONT_COLOR && FONT_COLOR != "")
+			this._update_style(this.label, "color", FONT_COLOR);
+		else
+			this._update_style(this.label, "color", null);
 	}
 
 	_removeTimeout() {
@@ -635,3 +643,4 @@ class MprisLabel extends PanelMenu.Button {
 		}
 	}
 });
+

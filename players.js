@@ -1,4 +1,7 @@
-const {Gio,Shell,St} = imports.gi;
+import Gio from 'gi://Gio';
+import GioUnix from 'gi://GioUnix';
+import Shell from 'gi://Shell';
+import St from 'gi://St';
 
 const mprisInterface = `
 <node>
@@ -21,6 +24,8 @@ const mprisInterface = `
 const entryInterface = `
 <node>
 	<interface name="org.mpris.MediaPlayer2">
+		<method name="Raise" />
+		<property name="CanRaise" type="b" access="read"/>
 		<property name="DesktopEntry" type="s" access="read"/>
 		<property name="Identity" type="s" access="read"/>
 	</interface>
@@ -40,7 +45,7 @@ const dBusInterface = `
 	</interface>
 </node>`
 
-var Players = class Players {
+export var Players = class Players {
 	constructor(settings){
 		this.list = [];
 		this.activePlayers= [];
@@ -173,16 +178,17 @@ class Player {
 	_onEntryProxyReady(){
 		this.identity = this.entryProxy.Identity;
 		this.desktopEntry = this.entryProxy.DesktopEntry;
+		this.canRaise = this.entryProxy.CanRaise;
 
 		this.desktopApp = null;
 		let matchedEntries = [];
 		if(! (this.identity == null | undefined))
-			matchedEntries = Gio.DesktopAppInfo.search(this.identity);
+			matchedEntries = GioUnix.DesktopAppInfo.search(this.identity);
 
 		if ( matchedEntries.length === 0 && !(this.desktopEntry == null | undefined) )//backup method using DesktopEntry info
-			matchedEntries = Gio.DesktopAppInfo.search(this.desktopEntry);
+			matchedEntries = GioUnix.DesktopAppInfo.search(this.desktopEntry);
 
-		//de-nest matchedEntries. Gio.DesktopAppInfo.search returns a nested array
+		//de-nest matchedEntries. GioUnix.DesktopAppInfo.search returns a nested array
 		let entries = [];
 		matchedEntries.forEach(nest => {
 			nest.forEach(entry => {
@@ -233,16 +239,25 @@ class Player {
 		}
 		return ""
 	}
-	getArtUrlIcon(size){
+	getArtUrlIcon(size,radius){
 		const url = this.stringFromMetadata("mpris:artUrl",this.metadata);
 
-		if(url.length>0)
-			this.albumArt = new St.Icon({
-				gicon: Gio.Icon.new_for_string(url),
-				style_class: 'system-status-icon',
-				icon_size: size,
-				style: "padding: 0px;"
-			})
+		if(url.length>0){
+			let innerArt = new St.Bin({
+				style: `
+					border-radius: ${radius}px;
+					overflow: hidden;
+					padding: 0px;
+					width: ${size}px;
+					height: ${size}px;
+					background-image: url('${url}');
+					background-size: cover;
+					background-position: center;
+				`,
+			});
+			this.albumArt = new St.Bin();
+			this.albumArt.set_child(innerArt);
+		}
 		else this.albumArt = null;
 
 		return this.albumArt
@@ -256,7 +271,7 @@ class Player {
 		if(this.desktopApp == null | undefined)
 			return icon
 
-		let entry = Gio.DesktopAppInfo.new(this.desktopApp);
+		let entry = GioUnix.DesktopAppInfo.new(this.desktopApp);
 		let gioIcon = entry.get_icon();
 		icon.set_gicon(gioIcon);
 		return icon
@@ -276,6 +291,9 @@ class Player {
 			return
 		}
 	}
+	raise() { //activate source app / browser tab
+		this.entryProxy.RaiseAsync();
+	}
 	goNext(){
 		if (this.proxy.CanGoNext)
 			this.proxy.NextRemote()
@@ -289,10 +307,22 @@ class Player {
 		let playerWindow = this._matchAppWindow();
 		let currentWorkspace = global.workspace_manager.get_active_workspace();
 
-		if (!playerWindow)
-			return
+		if (!playerWindow){
+			if (this.canRaise){
+				this.previousWorkspace = currentWorkspace;
+				this.previousWindow = focusedWindow;
+				this.raisedFromBackground = true;
+				this.raise();
+			}
+			return;
+		}
 
 		if (focusedWindow == playerWindow){
+			if (this.raisedFromBackground){
+				this.raisedFromBackground = false;
+				playerWindow.delete(global.get_current_time());
+				return;
+			}
 			if (currentWorkspace == this.previousWorkspace){ //go back to last workspace
 				if (this.playerWindowMinimized)
 					playerWindow.minimize();
@@ -303,11 +333,14 @@ class Player {
 				this.previousWorkspace.activate(global.get_current_time());
 		}
 		else{
+			this.raisedFromBackground = false;
 			if(this.desktopApp){
 				this.previousWorkspace = currentWorkspace;
 				this.previousWindow = focusedWindow;
 				this.playerWindowMinimized = playerWindow.minimized;
 				playerWindow.activate(global.get_current_time());
+				if (this.canRaise) //try to raise player window/tab using mpris if available
+					this.raise();
 			}
 		}
 	}

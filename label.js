@@ -1,4 +1,4 @@
-var buildLabel = function buildLabel(players,settings){
+export var buildLabel = function buildLabel(players,settings){
 	const MAX_STRING_LENGTH = settings.get_int('max-string-length');
 	const BUTTON_PLACEHOLDER = settings.get_string('button-placeholder');
 	const LABEL_FILTERED_LIST = settings.get_string('label-filtered-list');
@@ -67,7 +67,7 @@ function parseMetadataField(data,settings,[LABEL_FILTERED_LIST,MAX_STRING_LENGTH
 			settings.set_string('label-filtered-list',sanitizedInput);
 		}
 
-		const filterRegex = new RegExp("(?:-|\\(|\\[).*(?:" + sanitizedInput.replace(",","|") + ").*(?:$|\\)|\\])","gi");
+		const filterRegex = new RegExp("\\s*(?:-|\\(|\\[)[^-\\(\\[]*(?:" + sanitizedInput.replace(",","|") + ").*(?:$|\\)|\\])","gi");
 
 		data = data.replace(filterRegex,"");
 	}
