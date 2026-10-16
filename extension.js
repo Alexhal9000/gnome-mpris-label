@@ -502,14 +502,9 @@ class MprisLabel extends PanelMenu.Button {
 			return
 
 		if(USE_ALBUM){
-			const ALBUM_SIZE = this.settings.get_int('album-size');
-			const ALBUM_RADIUS = this.settings.get_int('album-radius');
-			let size = Math.floor(Main.panel.height*ALBUM_SIZE/100);
-			let corner_radius = Math.floor(size*ALBUM_RADIUS/200); //radius in pixels
-
 			const blacklist = ALBUM_BLACKLIST.toLowerCase().replaceAll(' ','').split(',');
 			if(!this.player.identity || !blacklist.includes(this.player.identity.toLowerCase()))
-				this.icon = this.player.getArtUrlIcon(size,corner_radius);
+				this.icon = this._buildAlbumArt(ICON_PADDING);
 		}
 
 		if(this.icon == null){
@@ -519,7 +514,13 @@ class MprisLabel extends PanelMenu.Button {
 		}
 
 		if (this.icon != null | undefined){
-			if (ICON_PLACE == "right"){
+			if (this.icon === this.albumArtIcon){ //custom album art carries its own margins
+				if (ICON_PLACE == "right")
+					this.box.add_child(this.icon);
+				else if (ICON_PLACE == "left")
+					this.box.insert_child_at_index(this.icon,0);
+			}
+			else if (ICON_PLACE == "right"){
 				this._update_style(this.label, "margin-right", ICON_PADDING + "px");
 				this.box.add_child(this.icon);
 			}
@@ -533,6 +534,48 @@ class MprisLabel extends PanelMenu.Button {
 			if (ICON_DESATURATION > 0)
 				this.icon.add_effect_with_name('desaturate', new Clutter.DesaturateEffect({ factor: ICON_DESATURATION / 100 }));
 		}
+	}
+
+	// Album art cropped to the panel with a left-rounded edge. When ALBUM_SIZE (px) is wider
+	// than the panel, a black fade is overlaid on the right side so it blends into the bar.
+	_buildAlbumArt(iconPadding){
+		this.albumArtIcon = null;
+		const url = this.player.stringFromMetadata("mpris:artUrl",this.player.metadata);
+		if(!url || url.length == 0)
+			return null;
+
+		const ALBUM_SIZE = this.settings.get_int('album-size');
+		const panelHeight = Main.panel.height;
+		const artHeight = Math.floor(panelHeight*0.8);
+		const fadeWidth = Math.floor(ALBUM_SIZE*0.4);
+
+		const art = new St.Bin({style_class: 'system-status-icon'});
+		art.set_clip_to_allocation(true);
+		art.set_size(ALBUM_SIZE,artHeight);
+		art.set_style(
+			`margin-left: ${iconPadding}px; margin-right: 0; ` +
+			`width: ${ALBUM_SIZE}px; ` +
+			`background-image: url('${url}'); ` +
+			`border-radius: ${panelHeight*0.2}px 0 0 ${panelHeight*0.2}px; ` +
+			`background-size: cover; background-position: center; ` +
+			`border: none; padding: 0px; overflow: hidden;`);
+
+		if(ALBUM_SIZE > artHeight && fadeWidth > 1){
+			const overlay = new St.BoxLayout({style: `width: ${ALBUM_SIZE}px; height: ${panelHeight}px;`});
+			overlay.add_child(new St.Widget({style: `width: ${ALBUM_SIZE-fadeWidth}px; height: 100%;`}));
+
+			const fade = new St.BoxLayout({style: `width: ${fadeWidth}px; height: 100%;`});
+			for(let i = 0; i < fadeWidth; i++){
+				fade.add_child(new St.Widget({
+					style: `width: 1px; height: 100%; background-color: rgba(0,0,0,${i/(fadeWidth-1)});`
+				}));
+			}
+			overlay.add_child(fade);
+			art.add_child(overlay);
+		}
+
+		this.albumArtIcon = art;
+		return art;
 	}
 
 	_update_style(widget, property, value) {

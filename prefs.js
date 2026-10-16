@@ -21,7 +21,7 @@ fillPreferencesWindow(window){
 	addSwitch(settings,group,'symbolic-source-icon', 'Use symbolic source icon', "Uses an icon that follows the shell's color scheme");
 	addSwitch(settings,group,'use-album','Use album art as icon when available',undefined);
 	addSpinButton(settings,group,'icon-desaturation','Icon desaturation (in %)',0,100,"0% full color, 100%  greyscale");
-	addSpinButton(settings,group,'album-size','Album art scaling (in %)',20,250,undefined);
+	addSpinButton(settings,group,'album-size','Album art width (in px)',20,250,undefined);
 	addSpinButton(settings,group,'album-radius','Album art corner radius (in %)',0,100,"0% for square, ~25% for rounded corners, 100% for circle");
 
 	group = addGroup(page,'Position');
