@@ -1,6 +1,8 @@
 ![alt text](https://github.com/Alexhal9000/gnome-mpris-label/raw/main/screenshot_Alexhal9000.png "extension screenshot")
 
 # About
+> **Fork notice:** this is a personal fork of [Moon-0xff/gnome-mpris-label](https://github.com/Moon-0xff/gnome-mpris-label). It is based on upstream's GNOME 49/50 release and adds a custom album-art design (cropped, rounded on the left, with a fade into the panel; `album-size` is a width in pixels). It was rebased onto the updated upstream after the GNOME 50 upgrade; all credit for the extension goes to upstream.
+
 This GNOME extension reads metadata information from an mpris compatible player and displays it on the top bar. It works with Spotify, Vlc, Rhythmbox, Chromium based browsers and (probably) any mpris compatible player.
 
 This extension was originally a fork for [mheine's gnome spotify label](https://github.com/mheine/gnome-shell-spotify-label). It quickly spiraled out of control and i ended up replacing or reverting all but a hint of the original code, so i decided to start this repository from scratch.
